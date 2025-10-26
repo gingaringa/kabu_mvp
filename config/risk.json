@@ -1,0 +1,7 @@
+{
+  "capital": 1000000,
+  "risk_pct": 0.005,
+  "max_positions": 3,
+  "lot_size": 100,
+  "tick_size": 1.0
+}

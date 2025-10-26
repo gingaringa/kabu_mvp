@@ -1,0 +1,57 @@
+import pandas as pd
+import numpy as np
+
+def vwap(df: pd.DataFrame):
+    pv = (df["Close"] * df["Volume"]).cumsum()
+    vv = df["Volume"].cumsum().replace(0, np.nan)
+    return pv / vv
+
+def compute_orb_signals(min1: pd.DataFrame, or_minutes=5, use_vwap=True):
+    df = min1.copy()
+    df["VWAP"] = vwap(df)
+    or_window = df.iloc[:or_minutes]
+    or_high = or_window["High"].max()
+    or_low  = or_window["Low"].min()
+
+    entry_idx = None
+    for i in range(or_minutes, len(df)):
+        price = df["Close"].iloc[i]
+        if price > or_high:
+            if (not use_vwap) or (price >= df["VWAP"].iloc[i]):
+                entry_idx = i
+                break
+
+    signal = {"entry": None, "exit": None, "or_high": or_high, "or_low": or_low}
+    if entry_idx is None:
+        return signal
+
+    entry_price = df["Close"].iloc[entry_idx]
+    stop_idx = None
+    for j in range(entry_idx+1, len(df)):
+        if df["Low"].iloc[j] <= or_low:
+            stop_idx = j
+            break
+
+    if stop_idx is not None:
+        exit_idx = stop_idx
+    else:
+        exit_idx = len(df)-1
+
+    signal["entry"] = {"t": df.index[entry_idx], "price": float(entry_price)}
+    signal["exit"]  = {"t": df.index[exit_idx],  "price": float(df["Close"].iloc[exit_idx]),
+                       "reason": "stop" if stop_idx is not None else "eod"}
+    return signal
+
+def size_by_risk(entry_price, stop_price, capital, risk_pct, lot_size=100, tick_size=1.0):
+    # リスクベース（既存）
+    risk_per_share = max(entry_price - stop_price, tick_size)
+    risk_budget = capital * risk_pct
+    shares_by_risk = int((risk_budget // risk_per_share) // lot_size * lot_size)
+
+    # 資金上限（資金の100%で買える最大株数）
+    max_cost_pct = 1.0  # 必要なら設定化も可
+    cost_cap = capital * max_cost_pct
+    shares_by_cash = int((cost_cap // entry_price) // lot_size * lot_size)
+
+    shares = min(shares_by_risk, shares_by_cash)
+    return max(shares, 0)

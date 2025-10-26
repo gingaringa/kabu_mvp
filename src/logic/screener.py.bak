@@ -1,0 +1,59 @@
+import pandas as pd
+import numpy as np
+
+def screen_by_liquidity(daily_df: pd.DataFrame, date, min_adv=1e8, top_n=10):
+    day = daily_df[daily_df["date"]==date].copy()
+    if day.empty:
+        day = daily_df.sort_values("date").groupby("code").tail(1).copy()
+    day["adv"] = day["Close"] * day["Volume"]
+    cand = day.sort_values("adv", ascending=False)
+    cand = cand[cand["adv"]>=min_adv]
+    return cand.head(top_n)["code"].tolist()
+
+def screen_by_liquidity_enhanced(
+    daily_df: pd.DataFrame, date,
+    min_adv: float = 1e8, top_n: int = 10,
+    min_atr_pct: float | None = None, max_atr_pct: float | None = None,
+    gap_min: float | None = None, gap_max: float | None = None,
+    atr_window: int = 20
+):
+    """
+    ADV + ATR% + ギャップ幅で抽出（ATRは前日までのローリング、ギャップは当日Open vs 前日Close）
+    単位: ATR% は 100*ATR/PrevClose, ギャップ% は 100*(Open-PrevClose)/PrevClose
+    """
+    d = daily_df.sort_values(["code","date"]).copy()
+    d["prev_close"] = d.groupby("code")["Close"].shift(1)
+
+    # True Range と ATR(過去窓)
+    prev_close = d["prev_close"].fillna(d["Close"])
+    tr = pd.concat([
+        (d["High"] - d["Low"]).abs(),
+        (d["High"] - prev_close).abs(),
+        (d["Low"]  - prev_close).abs()
+    ], axis=1).max(axis=1)
+    d["TR"] = tr
+    d["ATR"] = d.groupby("code")["TR"].transform(lambda s: s.rolling(atr_window, min_periods=1).mean())
+    # 当日の判定は「前日までのATR」を使う
+    d["ATR_prev"] = d.groupby("code")["ATR"].shift(1)
+
+    day = d[d["date"]==date].copy()
+    if day.empty:
+        day = d.groupby("code").tail(1).copy()
+
+    day["adv"] = day["Close"] * day["Volume"]
+    day["gap_pct"] = 100.0 * (day["Open"] - day["prev_close"]) / day["prev_close"]
+    day["atr_pct"] = 100.0 * (day["ATR_prev"] / day["prev_close"])
+
+    # フィルタ
+    q = day[day["adv"] >= min_adv].copy()
+    if min_atr_pct is not None:
+        q = q[q["atr_pct"] >= min_atr_pct]
+    if max_atr_pct is not None:
+        q = q[q["atr_pct"] <= max_atr_pct]
+    if gap_min is not None:
+        q = q[q["gap_pct"] >= gap_min]
+    if gap_max is not None:
+        q = q[q["gap_pct"] <= gap_max]
+
+    q = q.sort_values("adv", ascending=False).head(top_n)
+    return q["code"].astype(str).tolist()

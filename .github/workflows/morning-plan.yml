@@ -1,8 +1,11 @@
 name: Morning Plan (daily JST)
 
 on:
-  # 手動実行
   workflow_dispatch:
+    inputs:
+      date:
+        description: "YYYY-MM-DD (JST)。未指定時は当日(JST)"
+        required: false
   # JST 08:55 = UTC 23:55（前日）。日〜木の 23:55 に実行 = 月〜金の 08:55 JST 相当
   schedule:
     - cron: '55 23 * * 0-4'
@@ -19,7 +22,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PYTHONUNBUFFERED: "1"
-      TZ: Asia/Tokyo
 
     steps:
       - name: Checkout
@@ -29,22 +31,32 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-          cache: 'pip'
 
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # JST の日付を出力（例: 2025-10-17）
+      # JST の当日日付を取得
       - name: Get JST date
+        id: jst
+        run: echo "JST=$(TZ=Asia/Tokyo date +%F)" >> "$GITHUB_OUTPUT"
+
+      # 手動実行で date 入力があればそれを優先、無ければ JST を使う
+      - name: Decide target date
         id: d
-        run: echo "JST=$(date +%F)" >> "$GITHUB_OUTPUT"
+        run: |
+          if [ -n "${{ github.event.inputs.date }}" ]; then
+            echo "DAY=${{ github.event.inputs.date }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "DAY=${{ steps.jst.outputs.JST }}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Run morning plan (mock)
         run: |
+          echo "Target DAY=${{ steps.d.outputs.DAY }}"
           python -m app.run_mock \
-            --date "${{ steps.d.outputs.JST }}" \
+            --date "${{ steps.d.outputs.DAY }}" \
             --max 5 \
             --min-adv 1e8 \
             --min-atr-pct 0.5 \
@@ -66,4 +78,5 @@ jobs:
             logs/plan_mock_*.csv
             logs/*.png
             logs/*.log
+          retention-days: 14
           if-no-files-found: ignore
